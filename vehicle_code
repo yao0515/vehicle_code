@@ -121,18 +121,18 @@ void lineFollowingAlgorithm() {
   int sensorState = (ll << 4) | (l << 3) | (c << 2) | (r << 1) | rr;
 
   //  動態速度配置
-  int speedStraight = 180;   // 直行
+  int speedStraight = 240;   // 直行
   
-  int turnOuter = 170;       // (微彎)外輪推力
-  int turnInner = 50;        // (微彎)內輪大幅減速 
+  int turnOuter = 220;       // (微彎)外輪推力
+  int turnInner = 100;        // (微彎)內輪大幅減速 
   
-  int sharpOuter = 190;      // (急彎)外輪加足推力
-  int sharpInner = -110;     // (急彎)內輪強制倒轉 
+  int sharpOuter = 220;      // (急彎)外輪加足推力
+  int sharpInner = -115;     // (急彎)內輪強制倒轉 
   
   int rescueSpeed = 160;     //  全白:原地旋轉速度 (推不動可加大至 200)
   
   int reverseSpeed = -100;   // 全黑等異常:倒退尋回基礎速度
-  int speedCreep = 110;      // 未知全白:終點，停車
+  int speedCreep = 100;      // 未知全白:終點，停車
 
 
   // 根據感測器狀態決定動作
