@@ -1,0 +1,254 @@
+#include "BluetoothSerial.h"
+
+// 1. 腳位定義 
+const int pinASL_R = 16;
+const int pinASL_G = 17;
+const int pinASL_B = 18;
+const int pinVLS = 4; 
+
+const int pinSensorLL = 36;
+const int pinSensorL  = 39;
+const int pinSensorC  = 34;
+const int pinSensorR  = 35;
+const int pinSensorRR = 32;
+
+const int pinENA = 14; 
+const int pinIN1 = 27; 
+const int pinIN2 = 26; 
+
+const int pinENB = 21; 
+const int pinIN3 = 22; 
+const int pinIN4 = 23; 
+
+// 2. 狀態與全域變數定義
+enum VehicleState {
+  STATE_SAFE,
+  STATE_AUTONOMOUS,
+  STATE_OTHER
+};
+
+VehicleState currentState = STATE_SAFE;
+int lastVLSState = HIGH;
+
+// 記憶前一次過彎的方向：0=直行, -1=偏左(需左轉), 1=偏右(需右轉)
+int lastDirection = 0;   
+
+BluetoothSerial SerialBT; 
+
+// 3. 初始化設定
+void setup() {
+  Serial.begin(115200);
+  SerialBT.begin("ESP32_NCKUES_Car"); 
+  Serial.println("Bluetooth is ready! You can pair your phone now.");
+
+  pinMode(pinASL_R, OUTPUT);
+  pinMode(pinASL_G, OUTPUT);
+  pinMode(pinASL_B, OUTPUT);
+  pinMode(pinVLS, INPUT_PULLUP);
+
+  pinMode(pinSensorLL, INPUT);
+  pinMode(pinSensorL,  INPUT);
+  pinMode(pinSensorC,  INPUT);
+  pinMode(pinSensorR,  INPUT);
+  pinMode(pinSensorRR, INPUT);
+
+  pinMode(pinENA, OUTPUT);
+  pinMode(pinIN1, OUTPUT);
+  pinMode(pinIN2, OUTPUT);
+  pinMode(pinENB, OUTPUT);
+  pinMode(pinIN3, OUTPUT);
+  pinMode(pinIN4, OUTPUT);
+
+  stopMotors(); 
+}
+
+// 4. main loop
+void loop() {
+  // 1. 檢查遠程緊急制動 (EBS)
+  if (SerialBT.available()) {
+    char incomingChar = SerialBT.read();
+    if (incomingChar == 'E' || incomingChar == 'e') {
+      currentState = STATE_SAFE;
+      Serial.println("EBS Triggered Remotely!");
+    }
+  }
+
+  // 2. VLS setting
+  int currentVLSState = digitalRead(pinVLS);
+  
+  if (currentVLSState == LOW && lastVLSState == HIGH) {
+    delay(50); // 延遲時間
+    if (digitalRead(pinVLS) == LOW) {
+      if (currentState == STATE_SAFE) {
+        currentState = STATE_AUTONOMOUS;
+      } else if (currentState == STATE_AUTONOMOUS) {
+        currentState = STATE_SAFE;
+      }
+    }
+  }
+  lastVLSState = currentVLSState;
+
+  // 3. 執行狀態行為
+  executeStateBehavior();
+
+  // 4. 更新 ASL 燈號顯示
+  updateASL(currentState);
+}
+
+// 5. 狀態行為控制
+void executeStateBehavior() {
+  switch (currentState) {
+    case STATE_SAFE:
+      stopMotors(); 
+      break;
+    case STATE_AUTONOMOUS:
+      lineFollowingAlgorithm(); 
+      break;
+    case STATE_OTHER:
+      stopMotors();
+      break;
+  }
+}
+
+// 6. 循跡演算法 (加入全白記憶救援邏輯)
+void lineFollowingAlgorithm() {
+  int ll = digitalRead(pinSensorLL);
+  int l  = digitalRead(pinSensorL);
+  int c  = digitalRead(pinSensorC);
+  int r  = digitalRead(pinSensorR);
+  int rr = digitalRead(pinSensorRR);
+
+  int sensorState = (ll << 4) | (l << 3) | (c << 2) | (r << 1) | rr;
+
+  //  動態速度配置
+  int speedStraight = 180;   // 直行
+  
+  int turnOuter = 170;       // (微彎)外輪推力
+  int turnInner = 50;        // (微彎)內輪大幅減速 
+  
+  int sharpOuter = 190;      // (急彎)外輪加足推力
+  int sharpInner = -110;     // (急彎)內輪強制倒轉 
+  
+  int rescueSpeed = 160;     //  全白:原地旋轉速度 (推不動可加大至 200)
+  
+  int reverseSpeed = -100;   // 全黑等異常:倒退尋回基礎速度
+  int speedCreep = 0;      // 未知全白:終點，停車
+
+
+  // 根據感測器狀態決定動作
+  switch (sensorState) {
+    // 置中區間
+    case 0b00100: 
+    case 0b01110: 
+    case 0b01010: 
+      setMotorSpeeds(speedStraight, speedStraight);
+      lastDirection = 0; // 記住目前是直行
+      break;
+
+    // 輕微偏移區間：減速微調
+    case 0b01100: 
+    case 0b01000:
+      setMotorSpeeds(turnInner, turnOuter); 
+      lastDirection = -1; // 記住最後偏左
+      break;
+      
+    case 0b00110: 
+    case 0b00010:
+      setMotorSpeeds(turnOuter, turnInner); 
+      lastDirection = 1;  // 記住最後偏右
+      break;
+
+    // 嚴重偏移區間：轉向拉回
+    case 0b11000:
+    case 0b10000:
+    case 0b11100:
+    case 0b11110:
+      setMotorSpeeds(sharpInner, sharpOuter); 
+      lastDirection = -1; // 記住最後嚴重偏左
+      break;
+
+    case 0b00011:
+    case 0b00001:
+    case 0b00111:
+    case 0b01111:
+      setMotorSpeeds(sharpOuter, sharpInner); 
+      lastDirection = 1;  // 記住最後嚴重偏右
+      break;
+
+    // 危險狀態：固定向左後方倒退
+    case 0b11111:
+      setMotorSpeeds(reverseSpeed-10, reverseSpeed-30);
+      break;
+      
+    // 修復：全白救援
+    case 0b00000:
+      if (lastDirection == -1) {
+        // 剛才在左轉，現在衝出去了 -> 繼續極限左轉找黑線
+        setMotorSpeeds(-rescueSpeed, rescueSpeed); 
+      } else if (lastDirection == 1) {
+        // 剛才在右轉 (90度彎道)，現在衝出去了 -> 繼續極限右轉找黑線
+        setMotorSpeeds(rescueSpeed, -rescueSpeed); 
+      } else {
+        // 如果原本是直行卻突然全白即是遇到終點，停車
+        setMotorSpeeds(speedCreep, speedCreep);
+      }
+      break;
+  }
+}
+
+// 7. L298N 馬達控制模組 
+void setMotorSpeeds(int speedLeft, int speedRight) {
+  speedLeft = constrain(speedLeft, -255, 255);
+  speedRight = constrain(speedRight, -255, 255);
+
+  if (speedLeft >= 0) {
+    digitalWrite(pinIN1, HIGH);
+    digitalWrite(pinIN2, LOW);
+    analogWrite(pinENA, speedLeft);
+  } else {
+    digitalWrite(pinIN1, LOW);
+    digitalWrite(pinIN2, HIGH);
+    analogWrite(pinENA, -speedLeft);
+  }
+
+  if (speedRight >= 0) {
+    digitalWrite(pinIN3, HIGH);
+    digitalWrite(pinIN4, LOW);
+    analogWrite(pinENB, speedRight);
+  } else {
+    digitalWrite(pinIN3, LOW);
+    digitalWrite(pinIN4, HIGH);
+    analogWrite(pinENB, -speedRight);
+  }
+}
+
+void stopMotors() {
+  digitalWrite(pinIN1, LOW);
+  digitalWrite(pinIN2, LOW);
+  analogWrite(pinENA, 0);
+  
+  digitalWrite(pinIN3, LOW);
+  digitalWrite(pinIN4, LOW);
+  analogWrite(pinENB, 0);
+}
+
+// 8. ASL 燈號更新模組
+void updateASL(VehicleState state) {
+  switch (state) {
+    case STATE_SAFE:
+      digitalWrite(pinASL_R, LOW);
+      digitalWrite(pinASL_G, HIGH);
+      digitalWrite(pinASL_B, LOW);
+      break;
+    case STATE_AUTONOMOUS:
+      digitalWrite(pinASL_R, HIGH);
+      digitalWrite(pinASL_G, LOW);
+      digitalWrite(pinASL_B, LOW);
+      break;
+    case STATE_OTHER:
+      digitalWrite(pinASL_R, LOW);
+      digitalWrite(pinASL_G, LOW);
+      digitalWrite(pinASL_B, HIGH);
+      break;
+  }
+}
