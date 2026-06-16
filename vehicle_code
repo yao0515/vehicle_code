@@ -132,7 +132,7 @@ void lineFollowingAlgorithm() {
   int rescueSpeed = 160;     //  全白:原地旋轉速度 (推不動可加大至 200)
   
   int reverseSpeed = -100;   // 全黑等異常:倒退尋回基礎速度
-  int speedCreep = 0;      // 未知全白:終點，停車
+  int speedCreep = 110;      // 未知全白:終點，停車
 
 
   // 根據感測器狀態決定動作
