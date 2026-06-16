@@ -132,7 +132,7 @@ void lineFollowingAlgorithm() {
   int rescueSpeed = 160;     //  全白:原地旋轉速度 (推不動可加大至 200)
   
   int reverseSpeed = -100;   // 全黑等異常:倒退尋回基礎速度
-  int speedCreep = 100;      // 未知全白:終點，停車
+  int speedCreep = 100;      // 未知全白
 
 
   // 根據感測器狀態決定動作
@@ -189,7 +189,7 @@ void lineFollowingAlgorithm() {
         // 剛才在右轉 (90度彎道)，現在衝出去了 -> 繼續極限右轉找黑線
         setMotorSpeeds(rescueSpeed, -rescueSpeed); 
       } else {
-        // 如果原本是直行卻突然全白即是遇到終點，停車
+        // 如果原本是直行卻突然全白即緩慢直行
         setMotorSpeeds(speedCreep, speedCreep);
       }
       break;
